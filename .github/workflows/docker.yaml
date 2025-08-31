@@ -1,177 +1,106 @@
-name: lsky-pro build and push
+name: 🐳 Build and Push to Aliyun ACR
 
 # 触发条件配置
 on:
-  # 允许在 GitHub Actions 页面手动触发工作流（用于测试和调试）
-  workflow_dispatch:
+  workflow_dispatch:                   # 允许手动触发
 
-# 全局环境变量，可在所有作业中引用
+# 环境变量配置
 env:
-  IMAGE_NAME: lsky-pro
-  ALIYUN_REGISTRY: "${{ secrets.ALIYUN_REGISTRY }}"
-  ALIYUN_NAME_SPACE: "${{ secrets.ALIYUN_NAME_SPACE }}"
-  ALIYUN_REGISTRY_USER: "${{ secrets.ALIYUN_REGISTRY_USER }}"
-  ALIYUN_REGISTRY_PASSWORD: "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"
+  IMAGE_NAME: lsky-pro		          # 镜像名称
+  ALIYUN_REGION: cn-chengdu        	# 阿里云区域（根据你的仓库修改）
+  NAMESPACE: byte-blazer	          # 阿里云命名空间:cite[1]:cite[7]
 
-# 作业定义
 jobs:
-  # 构建和推送镜像作业
   build-and-push:
-    name: 🏗️ 构建并推送Docker镜像
+    name: 🏗️ Build and Push to Aliyun ACR
     runs-on: ubuntu-latest
-
-    # 权限设置（必要的 GitHub 权限）
+    
     permissions:
       contents: read
-      packages: write
-
+    
     steps:
-      # 步骤 1: 检出代码
-      - name: 📥 Checkout source code
+      # 步骤1: 检出代码
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0            # 获取所有历史记录，便于元数据生成
-          submodules: recursive     # 递归初始化子模块（如有）
+          fetch-depth: 0              # 获取完整历史记录用于元数据生成
 
-      # 步骤 2: 设置 Docker Buildx（支持多平台构建和高级缓存）
+      # 步骤2: 设置Docker Buildx（支持高级构建特性）
       - name: ⚙️ Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          driver: docker-container  # 使用容器驱动，支持多平台构建
-          buildkitd-flags: --debug  # 可选：启用 BuildKit 调试模式
-          install: true             # 确保安装 Buildx
+          driver: docker-container    # 使用容器驱动，支持多平台构建
+          install: true               # 确保安装Buildx
 
-      # 步骤 3: 登录到 Docker Hub
-      - name: 🔐 登录阿里云镜像仓库
-        uses: ${{ALIYUN_REGISTRY}}
-        with:
-          username: ${{ ALIYUN_REGISTRY_USER }}  # Docker Hub 用户名
-          password: ${{ ALIYUN_REGISTRY_PASSWORD }}     # Docker Hub 访问令牌（建议使用 Token 而非密码）
-          # registry: ${{ env.REGISTRY }}              # 显式指定注册表（可选）
-
-      # 步骤 4: 提取 Docker 元数据（自动生成标签和标签）
-      - name: 🏷️ Extract metadata for Docker
-        id: meta                    # 步骤标识，用于后续引用输出
-        uses: docker/Dockerfile
+      # 步骤3: 提取元数据（自动生成标签）
+      - name: 🏷️ Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-          # 标签生成策略：
+            ${{ env.ALIYUN_REGION }}.aliyuncs.com/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch   # 分支名称作为标签
-            type=ref,event=tag      # Git 标签作为标签
-            type=semver,pattern={{version}}      # 语义版本（v1.0.0）
-            type=semver,pattern={{major}}.{{minor}}  # 主次版本（v1.0）
-            type=semver,pattern={{major}}           # 主版本（v1）
-            type=sha                 # Git commit SHA 作为标签
+            type=ref,event=branch     # 分支名称作为标签
+            type=ref,event=tag        # Git标签作为标签
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha                  # Commit SHA作为标签
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
 
-      # 步骤 5: 构建和推送 Docker 镜像
+      # 步骤4: 登录阿里云容器镜像服务
+      - name: 🔐 Login to Aliyun Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ALIYUN_REGION }}.aliyuncs.com
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}      # 阿里云用户名:cite[1]:cite[4]
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}      # 阿里云密码或访问令牌:cite[1]:cite[4]
+
+      # 步骤5: 构建并推送Docker镜像
       - name: 🚀 Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .                # 构建上下文路径（Dockerfile 所在目录）
-          file: ./Dockerfile        # Dockerfile 路径（如非默认位置需指定）
-          platforms: ${{ env.TARGET_PLATFORMS }}  # 目标平台架构
-          push: ${{ github.event_name != 'pull_request' }}  # 仅在非 PR 时推送
-          tags: ${{ steps.meta.outputs.tags }}    # 使用元数据生成的标签
-          labels: ${{ steps.meta.outputs.labels }} # 使用元数据生成的标签
+          context: .                  # 使用当前目录作为构建上下文
+          file: ./Dockerfile         # Dockerfile路径（如果在根目录）
+          push: ${{ github.event_name != 'pull_request' }}  # PR时不推送
+          tags: ${{ steps.meta.outputs.tags }}              # 使用元数据生成的标签
+          labels: ${{ steps.meta.outputs.labels }}          # 使用元数据生成的标签
+          cache-from: type=gha,scope=${{ github.ref }}-${{ env.IMAGE_NAME }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref }}-${{ env.IMAGE_NAME }}
+          provenance: false           # 如需生成供应链证明可设为true
 
-          # 缓存配置（加速后续构建）
-          cache-from: type=gha,scope=${{ github.ref }}-${{ env.TARGET_PLATFORMS }}
-          cache-to: type=gha,mode=max,scope=${{ github.ref }}-${{ env.TARGET_PLATFORMS }}
-
-          # 构建参数（可在 Dockerfile 中使用 ARG 指令引用）
-          build-args: |
-            BUILD_DATE=${{ steps.meta.outputs.created }}
-            VCS_REF=${{ github.sha }}
-            BUILD_NUMBER=${{ github.run_number }}
-
-          #  provenance: true       # 默认启用，生成供应链证明
-          #  sbom: true             # 默认启用，生成软件物料清单
-
-        # 环境变量（可在 Dockerfile 中使用 ENV 指令引用）
-        env:
-          NODE_ENV: production      # 示例：设置构建环境
-
-      # 步骤 6: 上传构建日志（用于调试）
+      # 步骤6: 上传构建日志（用于调试）
       - name: 📋 Upload build logs
-        if: always()                # 无论构建成功与否都执行
+        if: always()                  # 无论成功失败都上传
         uses: actions/upload-artifact@v4
         with:
           name: buildkit-logs
           path: /tmp/buildkit-log*
           retention-days: 7
 
-  # 镜像测试作业（可选）
-  test-image:
-    name: 🧪 Test Docker Image
+  # 可选：安全扫描步骤
+  security-scan:
+    name: 🔍 Security Scan
     runs-on: ubuntu-latest
-    needs: build-and-push           # 依赖构建作业完成
-    if: github.event_name == 'pull_request'  # 仅在 PR 时运行测试
-
-    # 服务容器（用于集成测试）
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_db
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    needs: build-and-push
+    if: success() && github.event_name != 'pull_request'
+    
     steps:
-      # 步骤 1: 检出代码
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      # 步骤 2: 设置 Docker Buildx
-      - name: ⚙️ Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 步骤 3: 登录到 Docker Hub（如需拉取私有镜像）
-      - name: 🔐 Log in to Docker Hub
-        if: github.event_name != 'pull_request'  # 仅在非 PR 时登录
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # 步骤 4: 运行容器测试
-      - name: 🐳 Run container tests
-        run: |
-          # 拉取镜像（这里使用元数据生成的标签示例）
-          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
-
-          echo "🧪 Running tests on image: $IMAGE_TAG"
-
-          # 运行容器并执行测试
-          docker run --rm \
-            --network host \
-            --env DATABASE_URL="postgresql://postgres:postgres@localhost:5432/test_db" \
-            $IMAGE_TAG \
-            npm test -- --ci --coverage
-
-          echo "✅ All tests passed!"
-
-      # 步骤 5: 安全扫描（可选）
-      - name: 🔍 Security scan with Trivy
+        
+      - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: "${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          image-ref: ${{ env.ALIYUN_REGION }}.aliyuncs.com/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: sarif
           output: trivy-results.sarif
           ignore-unfixed: true
           severity: HIGH,CRITICAL
-
-      # 步骤 6: 上传安全扫描结果
-      - name: 📤 Upload security scan results
+          
+      - name: Upload security scan results
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
